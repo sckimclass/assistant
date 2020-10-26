@@ -1,9 +1,0 @@
-import RPi.GPIO as GPIO
-GPIO.VERSION
-GPIO.setmode(GPIO.BOARD)
-
-GPIO.setup(37, GPIO.OUT)
-GPIO.output(37, GPIO.HIGH)
-
-GPIO.setup(29, GPIO.IN)
-

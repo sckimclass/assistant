@@ -30,12 +30,57 @@
 #include <sound/soc-dai.h>
 #include <sound/soc-dapm.h>
 
+#include <linux/i2c.h>
+#include <linux/regmap.h>
+
 #define ICS43432_RATE_MIN_HZ	7190  /* from data sheet */
 #define ICS43432_RATE_MAX_HZ	52800 /* from data sheet */
 /* Delay in enabling SDMODE after clock settles to remove pop */
 #define SDMODE_DELAY_MS		5
 
+static const struct reg_default voicehat_reg_defaults[] = {
+	{0x00, 0x00}, //State_Control_1
+	{0x01, 0x81}, //State_Control_2
+	{0x02, 0x50}, //State_Control_3
+	{0x03, 0x4e}, //Master_volume_control
+	{0x04, 0x18}, //Channel_1_volume_control
+	{0x05, 0x18}, //Channel_2_volume_control
+	{0x06, 0xa2}, //Under_Voltage_selection_for_high_voltage_supply
+	{0x07, 0xfe}, //State_control_4
+	{0x08, 0x6a}, //DRC_limiter_attack/release_rate
+	{0x09, 0x60}, //Prohibited
+	{0x0c, 0x32}, //Prohibited
+	{0x0d, 0x00}, //Prohibited
+	{0x0e, 0x00}, //Prohibited
+	{0x0f, 0x00}, //Prohibited
+	{0x10, 0x20}, //Top_5_bits_of_Attack_Threshold
+	{0x11, 0x00}, //Middle_8_bits_of_Attack_Threshold
+	{0x12, 0x00}, //Bottom_8_bits_of_Attack_Threshold
+	{0x13, 0x20}, //Top_8_bits_of_Power_Clipping
+	{0x14, 0x00}, //Middle_8_bits_of_Power_Clipping
+	{0x15, 0x00}, //Bottom_8_bits_of_Power_Clipping
+	{0x16, 0x00}, //State_control_5
+	{0x17, 0x00}, //Volume_Fine_Tune
+	{0x18, 0x40}, //DDynamic_Temperature_Control
+	{0x1a, 0x00}, //Top_8_bits_of_Noise_Gate_Attack_Level
+	{0x1b, 0x00}, //Middle_8_bits_of_Noise_Gate_Attack_Level
+	{0x1c, 0x1a}, //Bottom_8_bits_of_Noise_Gate_Attack_Level
+	{0x1d, 0x00}, //Top_8_bits_of_Noise_Gate_Release_Level
+	{0x1e, 0x00}, //Middle_8_bits_of_Noise_Gate_Release_Level
+	{0x1f, 0x53}, //Bottom_8_bits_of_Noise_Gate_Release_Level
+	{0x20, 0x00}, //Top_8_bits_of_DRC_Energy_Coefficient
+	{0x21, 0x10}, //Bottom_8_bits_of_DRC_Energy_Coefficient
+	{0x22, 0x08}, //Top_8_bits_of_Release_Threshold_For_DRC
+	{0x23, 0x00}, //Middle_8_bits_of_Release_Threshold
+	{0x24, 0x00}, //Bottom_8_bits_of_Release_Threshold
+	{0x25, 0x34}, //Device Number
+	{0x2e, 0x30}, //
+	{0x2f, 0x06}, //
+};
+
 struct voicehat_priv {
+	struct device *dev;
+	struct regmap *regmap;
 	struct delayed_work enable_sdmode_work;
 	struct gpio_desc *sdmode_gpio;
 	unsigned long sdmode_delay_jiffies;
@@ -63,6 +108,7 @@ static int voicehat_component_probe(struct snd_soc_component *component)
 
 	INIT_DELAYED_WORK(&voicehat->enable_sdmode_work,
 			  voicehat_enable_sdmode_work);
+	gpiod_set_value(voicehat->sdmode_gpio, 1);
 	return 0;
 }
 
@@ -120,11 +166,13 @@ static int voicehat_daiops_trigger(struct snd_pcm_substream *substream, int cmd,
 	case SNDRV_PCM_TRIGGER_STOP:
 	case SNDRV_PCM_TRIGGER_SUSPEND:
 	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
+#if 0
 		if (dai->playback_active) {
 			cancel_delayed_work(&voicehat->enable_sdmode_work);
 			dev_info(dai->dev, "Disabling audio amp...\n");
 			gpiod_set_value(voicehat->sdmode_gpio, 0);
 		}
+#endif
 		break;
 	}
 	return 0;
@@ -161,53 +209,95 @@ static const struct of_device_id voicehat_ids[] = {
 	MODULE_DEVICE_TABLE(of, voicehat_ids);
 #endif
 
-static int voicehat_platform_probe(struct platform_device *pdev)
+#define VOICEHAT_REG_MAX 0x2F
+
+static bool voicehat_volatile_register(struct device *dev, unsigned int reg)
+{
+	return true; /*all register are volatile*/
+}
+
+static const struct regmap_config voicehat_regmap_config = {
+	.reg_bits = 8,
+	.val_bits = 8,
+
+	.max_register = VOICEHAT_REG_MAX,
+	.reg_defaults = voicehat_reg_defaults,
+	.num_reg_defaults = ARRAY_SIZE(voicehat_reg_defaults),
+	.cache_type = REGCACHE_RBTREE,
+};
+
+static int voicehat_i2c_probe(struct i2c_client *i2c,
+			const struct i2c_device_id *id)
 {
 	struct voicehat_priv *voicehat;
 	unsigned int sdmode_delay;
 	int ret;
+	struct device *dev = &i2c->dev;
+	struct regmap *regmap;
+	int i;
 
-	voicehat = devm_kzalloc(&pdev->dev, sizeof(*voicehat), GFP_KERNEL);
+printk("%s 1\n", __func__);
+	regmap = devm_regmap_init_i2c(i2c, &voicehat_regmap_config);
+
+	voicehat = devm_kzalloc(dev, sizeof(*voicehat), GFP_KERNEL);
 	if (!voicehat)
 		return -ENOMEM;
 
-	ret = device_property_read_u32(&pdev->dev, "voicehat_sdmode_delay",
+printk("%s 2\n", __func__);
+	ret = device_property_read_u32(dev, "voicehat_sdmode_delay",
 				       &sdmode_delay);
 
 	if (ret) {
 		sdmode_delay = SDMODE_DELAY_MS;
-		dev_info(&pdev->dev,
+		dev_info(dev,
 			 "property 'voicehat_sdmode_delay' not found default 5 mS");
 	} else {
-		dev_info(&pdev->dev, "property 'voicehat_sdmode_delay' found delay= %d mS",
+		dev_info(dev, "property 'voicehat_sdmode_delay' found delay= %d mS",
 			 sdmode_delay);
 	}
 	voicehat->sdmode_delay_jiffies = msecs_to_jiffies(sdmode_delay);
 
-	dev_set_drvdata(&pdev->dev, voicehat);
+printk("%s 3\n", __func__);
+	voicehat->regmap = regmap;
+	voicehat->dev = dev;
+	dev_set_drvdata(dev, voicehat);
 
-	return snd_soc_register_component(&pdev->dev,
+	for (i = 0; i < ARRAY_SIZE(voicehat_reg_defaults); i++) {
+		regmap_write(regmap, voicehat_reg_defaults[i].reg, voicehat_reg_defaults[i].def);
+	}
+
+	ret =  snd_soc_register_component(dev,
 					  &voicehat_component_driver,
 					  &voicehat_dai,
 					  1);
+
+	printk("%s 4 %d \n", __func__, ret);
+	return ret;
 }
 
-static int voicehat_platform_remove(struct platform_device *pdev)
+static int voicehat_i2c_remove(struct i2c_client *client)
 {
-	snd_soc_unregister_component(&pdev->dev);
+	snd_soc_unregister_component(&client->dev);
 	return 0;
 }
 
-static struct platform_driver voicehat_driver = {
+static const struct i2c_device_id cx2092x_i2c_id[] = {
+	{"voicehat-codec", 0},
+	{}
+};
+MODULE_DEVICE_TABLE(i2c, cx2092x_i2c_id);
+
+static struct i2c_driver voicehat_i2c_driver = {
 	.driver = {
 		.name = "voicehat-codec",
 		.of_match_table = of_match_ptr(voicehat_ids),
 	},
-	.probe = voicehat_platform_probe,
-	.remove = voicehat_platform_remove,
+//	.id_table = cx2092x_i2c_id,
+	.probe = voicehat_i2c_probe,
+	.remove = voicehat_i2c_remove,
 };
 
-module_platform_driver(voicehat_driver);
+module_i2c_driver(voicehat_i2c_driver);
 
 MODULE_DESCRIPTION("Google voiceHAT Codec driver");
 MODULE_AUTHOR("Peter Malkin <petermalkin@google.com>");

@@ -16,24 +16,27 @@
 		target = <&gpio>;
 		__overlay__ {
 			googlevoicehat_pins: googlevoicehat_pins {
-				brcm,pins = <37>;
+				brcm,pins = <26>;
 				brcm,function = <1>; /* out */
 				brcm,pull = <0>; /* up */
 			};
 		};
 	};
 
-
 	fragment@2 {
-		target-path = "/";
+		target = <&i2c1>;
 		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "okay";
+
 			voicehat-codec {
-				#sound-dai-cells = <0>;
 				compatible = "google,voicehat";
-				pinctrl-names = "default";
-				pinctrl-0 = <&googlevoicehat_pins>;
-				sdmode-gpios= <&gpio 37 0>;
-				status = "okay";
+				reg = <0x34>;
+				#sound-dai-cells = <0>;
+                                pinctrl-names = "default";
+                                pinctrl-0 = <&googlevoicehat_pins>;
+                                sdmode-gpios= <&gpio 26 0>;
 			};
 		};
 	};
