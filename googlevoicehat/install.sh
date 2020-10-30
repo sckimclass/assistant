@@ -48,7 +48,6 @@ function check_kernel_headers() {
   VER_RUN=$(get_kernel_version)
   VER_HDR=$(dpkg -L raspberrypi-kernel-headers | egrep -m1 "/lib/modules/[^-]+/build" | awk -F'/' '{ print $4; }')
   [ "X$VER_RUN" == "X$VER_HDR" ] && {
-    echo "alan Ab"
     return 0
   }
   VER_HDR=$(dpkg -L linux-headers-$VER_RUN | egrep -m1 "/lib/modules/[[:print:]]+/build" | awk -F'/' '{ print $4; }')
@@ -219,6 +218,8 @@ CONFIG=/boot/config.txt
 [ -f /boot/firmware/usercfg.txt ] && CONFIG=/boot/firmware/usercfg.txt
 echo -e "\n### Found boot configuration file $CONFIG"
 
+sudo sed -i -e 's:#dtparam=i2c_arm=on:dtparam=i2c_arm=on:g' $CONFIG || true
+sudo sed -i -e 's:#dtparam=i2s=on:dtparam=i2s=on:g' $CONFIG || true
 sudo sed -i -e "s/^dtparam=audio=on/#\0/" /boot/config.txt
 
 grep -q "^googlevoicehat-soundcard$" $CONFIG || \
