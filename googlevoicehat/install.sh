@@ -118,7 +118,8 @@ if [ "X$keep_kernel" != "X" ]; then
 elif [ "X$compat_kernel" != "X" ]; then
   echo -e "\n### will compile with a compatible kernel..."
 else
-  FORCE_KERNEL=""
+#  FORCE_KERNEL=""
+  FORCE_KERNEL="1.20200819-1"
   echo -e "\n### will compile with the latest kernel..."
 fi
 [ "X$FORCE_KERNEL" != "X" ] && {
