@@ -53,7 +53,6 @@ function check_kernel_headers() {
   }
   VER_HDR=$(dpkg -L linux-headers-$VER_RUN | egrep -m1 "/lib/modules/[[:print:]]+/build" | awk -F'/' '{ print $4; }')
   [ "X$VER_RUN" == "X$VER_HDR" ] && {
-    echo "alan AB"
     return 0
   }
 
@@ -96,7 +95,7 @@ function download_install_debpkg() {
 }
 
 compat_kernel=
-keep_kernel=
+keep_kernel=Y
 # parse commandline options
 while [ ! -z "$1" ] ; do
   case $1 in
@@ -206,3 +205,21 @@ install_module "./" "googlevoicehat"
 
 echo -e "\n### Install device tree overlays"
 cp -v googlevoicehat-soundcard.dtbo $OVERLAYS
+
+#set kernel modules
+echo -e "\n### Codec driver loading at startup (in /etc/modules)"
+grep -q "^snd-soc-googlevoicehat-codec$" /etc/modules || \
+  echo "snd-soc-googlevoicehat-codec" >> /etc/modules
+grep -q "^snd-soc-rpi-simple-soundcard$" /etc/modules || \
+  echo "snd-soc-rpi-simple-soundcard" >> /etc/modules
+
+#set dtoverlays
+CONFIG=/boot/config.txt
+[ -f /boot/firmware/usercfg.txt ] && CONFIG=/boot/firmware/usercfg.txt
+echo -e "\n### Found boot configuration file $CONFIG"
+
+sudo sed -i -e "s/^dtparam=audio=on/#\0/" /boot/config.txt
+
+grep -q "^googlevoicehat-soundcard$" $CONFIG || \
+  echo "dtoverlay=googlevoicehat-soundcard" >> $CONFIG
+
