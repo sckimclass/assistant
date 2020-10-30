@@ -1,0 +1,206 @@
+diff --git a/src/aiy/assistant/action_helpers.py b/src/aiy/assistant/action_helpers.py
+new file mode 100644
+index 0000000..22930c5
+--- /dev/null
++++ b/src/aiy/assistant/action_helpers.py
+@@ -0,0 +1,101 @@
++# Copyright (C) 2017 Google Inc.
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++"""Helper functions for the Device Actions."""
++
++import concurrent.futures
++import logging
++import sys
++
++
++key_inputs_ = 'inputs'
++key_intent_ = 'intent'
++key_payload_ = 'payload'
++key_commands_ = 'commands'
++key_id_ = 'id'
++
++
++class DeviceRequestHandler(object):
++    """Asynchronous dispatcher for Device actions commands.
++
++    Dispatch commands to the given device handlers.
++
++    Args:
++      device_id: device id to match command against
++
++    Example:
++      # Use as as decorator to register handler.
++      device_handler = DeviceRequestHandler('my-device')
++      @device_handler.command('INTENT_NAME')
++      def handler(param):
++          pass
++    """
++
++    def __init__(self, device_id):
++        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
++        self.device_id = device_id
++        self.handlers = {}
++
++    def __call__(self, device_request):
++        """Handle incoming device request.
++
++        Returns: List of concurrent.futures for each command execution.
++        """
++        fs = []
++        if key_inputs_ in device_request:
++            for input in device_request[key_inputs_]:
++                if input[key_intent_] == 'action.devices.EXECUTE':
++                    for command in input[key_payload_][key_commands_]:
++                        fs.extend(self.submit_commands(**command))
++        return fs
++
++    def command(self, intent):
++        """Register a device action handlers."""
++        def decorator(fn):
++            self.handlers[intent] = fn
++        return decorator
++
++    def submit_commands(self, devices, execution):
++        """Submit device command executions.
++
++        Returns: a list of concurrent.futures for scheduled executions.
++        """
++        fs = []
++        for device in devices:
++            if device[key_id_] != self.device_id:
++                logging.warning('Ignoring command for unknown device: %s'
++                                % device[key_id_])
++                continue
++            if not execution:
++                logging.warning('Ignoring noop execution')
++                continue
++            for command in execution:
++                f = self.executor.submit(
++                    self.dispatch_command, **command
++                )
++                fs.append(f)
++        return fs
++
++    def dispatch_command(self, command, params=None):
++        """Dispatch device commands to the appropriate handler."""
++        try:
++            if command in self.handlers:
++                self.handlers[command](**params)
++            else:
++                logging.warning('Unsupported command: %s: %s',
++                                command, params)
++        except Exception as e:
++            logging.warning('Error during command execution',
++                            exc_info=sys.exc_info())
++            raise e
+diff --git a/src/aiy/assistant/auth_helpers.py b/src/aiy/assistant/auth_helpers.py
+index c0f2757..49a4b7f 100644
+--- a/src/aiy/assistant/auth_helpers.py
++++ b/src/aiy/assistant/auth_helpers.py
+@@ -72,7 +72,7 @@ def _credentials_flow_interactive(client_secrets_path):
+         # Use chromium-browser by default. Raspbian Stretch uses Epiphany by
+         # default but that seems to cause issues:
+         # https://github.com/google/aiyprojects-raspbian/issues/269
+-        webbrowser.register('chromium-browser', None, webbrowser.Chrome('chromium-browser'), -1)
++        webbrowser.register('chromium-browser', None, webbrowser.Chrome('chromium-browser'))
+         credentials = flow.run_local_server()
+     else:
+         credentials = flow.run_console()
+diff --git a/src/aiy/assistant/grpc.py b/src/aiy/assistant/grpc.py
+index ae1d1bf..058971c 100644
+--- a/src/aiy/assistant/grpc.py
++++ b/src/aiy/assistant/grpc.py
+@@ -38,6 +38,9 @@ import logging
+ import math
+ import os
+ import sys
++import json
++import concurrent.futures
++import time
+ 
+ os.environ['GRPC_POLL_STRATEGY'] = 'epoll1'
+ import google.auth.transport.grpc
+@@ -47,7 +50,7 @@ import google.oauth2.credentials
+ from google.assistant.embedded.v1alpha2 import embedded_assistant_pb2
+ from google.assistant.embedded.v1alpha2 import embedded_assistant_pb2_grpc
+ 
+-from aiy.assistant import auth_helpers, device_helpers
++from aiy.assistant import auth_helpers, device_helpers, action_helpers
+ from aiy.board import Led
+ from aiy.voice.audio import AudioFormat, Recorder, BytesPlayer
+ 
+@@ -114,6 +117,21 @@ class AssistantServiceClient:
+             device_model_id=device_model_id,
+             device_id=device_id)
+ 
++        device_handler = action_helpers.DeviceRequestHandler(device_id)
++        self._device_handler = device_handler
++
++        @device_handler.command('com.example.commands.BlinkLight')
++        def blink(speed, number):
++            logging.info('Blinking device %s times.' % number)
++            delay = 1
++            if speed == "SLOWLY":
++                delay = 2
++            elif speed == "QUICKLY":
++                delay = 0.5
++            for i in range(int(number)):
++                logging.info('Device is blinking.')
++                time.sleep(delay)
++
+     @property
+     def volume_percentage(self):
+         """
+@@ -164,6 +182,7 @@ class AssistantServiceClient:
+ 
+     def _assist(self, recorder, play, deadline):
+         continue_conversation = False
++        device_actions_futures = []
+ 
+         for response in self._assistant.Assist(self._requests(recorder), deadline):
+             if response.event_type == END_OF_UTTERANCE:
+@@ -202,6 +221,17 @@ class AssistantServiceClient:
+             elif microphone_mode == CLOSE_MICROPHONE:
+                 continue_conversation = False
+                 logger.info('Not expecting follow-on query from user.')
++            if response.device_action.device_request_json:
++                device_request = json.loads(
++                    response.device_action.device_request_json
++                )
++                fs = self._device_handler(device_request)
++                if fs:
++                    device_actions_futures.extend(fs)
++
++        if len(device_actions_futures):
++            logging.info('Waiting for device executions to complete.')
++            concurrent.futures.wait(device_actions_futures)
+ 
+         return continue_conversation
+ 
+diff --git a/src/aiy/board.py b/src/aiy/board.py
+index 2d21e77..c1c21a5 100644
+--- a/src/aiy/board.py
++++ b/src/aiy/board.py
+@@ -322,8 +322,8 @@ else:
+     Led = SingleColorLed
+ 
+ 
+-BUTTON_PIN = 23
+-LED_PIN = 25
++BUTTON_PIN = 5
++LED_PIN = 6
+ 
+ class Board:
+     """An interface for the connected AIY board."""
