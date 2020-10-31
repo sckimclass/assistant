@@ -1,0 +1,91 @@
+{
+    "locale": "ko",
+    "manifest": {
+        "displayName": "Blinky light",
+        "invocationName": "Blinky light",
+        "category": "PRODUCTIVITY"
+    },
+    "actions": [
+        {
+            "name": "com.example.actions.BlinkLight",
+            "availability": {
+                "deviceClasses": [
+                    {
+                        "assistantSdkDevice": {}
+                    }
+                ]
+            },
+            "intent": {
+                "name": "com.example.intents.BlinkLight",
+                "parameters": [
+                    {
+                        "name": "number",
+                        "type": "SchemaOrg_Number"
+                    },
+                    {
+                        "name": "speed",
+                        "type": "Speed"
+                    }
+                ],
+                "trigger": {
+                    "queryPatterns": [
+                        "전등을 $SchemaOrg_Number:number 번 깜빡여줘",
+                        "전등을 $SchemaOrg_Number:number 번 깜빡여",
+                        "전등을 $SchemaOrg_Number:number 번 깜빡여주세요"
+                    ]
+                }
+            },
+            "fulfillment": {
+                "staticFulfillment": {
+                    "templatedResponse": {
+                        "items": [
+                            {
+                                "simpleResponse": {
+                                    "textToSpeech": "전등을 $number 깜빡일게요"
+                                }
+                            },
+                            {
+                                "deviceExecution": {
+                                    "command": "com.example.commands.BlinkLight",
+                                    "params": {
+                                        "speed": "$speed",
+                                        "number": "$number"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    ],
+    "types": [
+        {
+            "name": "$Speed",
+            "entities": [
+                {
+                    "key": "SLOWLY",
+                    "synonyms": [
+                        "slowly",
+                        "slow"
+                    ]
+                },
+                {
+                    "key": "NORMALLY",
+                    "synonyms": [
+                        "normally",
+                        "regular"
+                    ]
+                },
+                {
+                    "key": "QUICKLY",
+                    "synonyms": [
+                        "quickly",
+                        "fast",
+                        "quick"
+                    ]
+                }
+            ]
+        }
+    ]
+}
