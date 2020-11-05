@@ -1,0 +1,73 @@
+{
+    "actions": [
+        {
+            "name": "com.example.actions.OnOff",
+            "availability": {
+                "deviceClasses": [
+                    {
+                        "assistantSdkDevice": {}
+                    }
+                ]
+            },
+            "intent": {
+                "name": "com.example.intents.OnOff",
+                "parameters": [
+                    {
+                        "name": "onoff",
+                        "type": "OnOff"
+                    }
+                ],
+                "trigger": {
+                    "queryPatterns": [
+                        "전원을(을)? $OnOff:onoff( )?주세요",
+                        "전원(을)? $OnOff:onoff( )?세요",
+                        "전원(을)? $OnOff:onoff"
+                    ]
+                }
+            },
+            "fulfillment": {
+                "staticFulfillment": {
+                    "templatedResponse": {
+                        "items": [
+                            {
+                                "simpleResponse": {
+                                    "textToSpeech": "전원을 $onoff.raw겠습니다."
+                                }
+                            },
+                            {
+                                "deviceExecution": {
+                                    "command": "com.example.commands.OnOff",
+                                    "params": {
+                                        "on": "$onoff"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    ],
+    "types": [
+        {
+            "name": "$OnOff",
+            "entities": [
+                {
+                    "key": "on",
+                    "synonyms": [
+                        "켜",
+                        "키"
+                    ]
+                },
+                {
+                    "key": "off",
+                    "synonyms": [
+                        "꺼",
+                        "끄"
+                    ]
+                }
+            ]
+        }
+    ],
+    "locale": "ko"
+}
